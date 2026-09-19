@@ -1,0 +1,15 @@
+{
+  "name": "route-recovery",
+  "version": "0.1.1",
+  "description": "A skill for long horizon coding tasks, to improve the experience for non-top-tier models.",
+  "homepage": "https://github.com/inxups/route-recovery#readme",
+  "bugs": {
+    "url": "https://github.com/inxups/route-recovery/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/inxups/route-recovery.git"
+  },
+  "license": "MIT",
+  "author": "inxv"
+}
