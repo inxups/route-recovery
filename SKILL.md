@@ -5,41 +5,108 @@ description: Recover stalled coding tasks by preserving verified facts and testi
 
 # Route Recovery
 
-Treat the current implementation route as a falsifiable hypothesis. Keep the task goal stable, preserve verified facts, and do not let stale assistant narrative decide what happens next.
+Use this skill for coding tasks that may span multiple edits, modules, validations, or contexts.
 
-## Task lifecycle
+## Non-negotiable rules
 
-Classify the task before the first code change.
+1. Keep the user goal and constraints stable.
+2. Treat the current route as a falsifiable hypothesis.
+3. When evidence shows a route problem, stop before the next edit.
+4. Preserve verified facts; discard stale explanations and guesses.
+5. Never switch routes without the user explicit choice.
+6. Never auto-reset, clean, delete, install dependencies, migrate, or rewrite broadly.
 
-- Treat a task as short only when it is local, has one clear acceptance surface, has no architectural, migration, external-system, or unknown-API risk, and should need one bounded change.
-- Treat it as long or uncertain when any of those conditions is false. For a long or uncertain task, create `.route/state.json` before the first code change with the goal, acceptance criteria, constraints, Git baseline, initial route assumption, first probe, and failure criterion.
-- A short task is promoted before the next edit if its first verification fails and another fix is planned, the scope expands, a second acceptance surface appears, a route assumption changes, or context must be handed off. Mark pre-promotion history as unknown; do not invent it.
+## 1. Classify the task
 
-Use `scripts/route_check.py` to create and update state. Do not create a full log for every shell command. Record semantic checkpoints: route selection, probes/tests/builds, bounded changes, assumption changes, route decisions, and context handoffs.
+Classify before the first code edit.
 
-## Detect and classify
+**Short task**: one local module, one clear acceptance surface, no architecture/data-model/migration/external-system/unknown-API risk, and one bounded change is likely enough.
 
-When a problem appears, stop before the next code edit and record the expected result, observed result, normalized failure signature, reproducibility, affected assumption, checkpoint, and evidence reference.
+**Long or uncertain task**: any other case. Default to this class when uncertain.
 
-- Retry an environment or flaky failure once under the same conditions.
-- A local defect may receive one bounded fix only if the core assumption, interface, and architecture stay unchanged.
-- For uncertain evidence, run the smallest discriminating probe.
-- A hard-constraint conflict or contradicted core assumption freezes the route immediately.
+For a long or uncertain task, create `.route/state.json` before editing. Record:
 
-Mark the route stale when any of these persists across controlled checkpoints:
+- goal
+- acceptance criteria
+- constraints
+- baseline
+- initial route assumption
+- first probe
+- failure criterion
 
-- the same failure signature appears twice;
-- two checkpoints have no measurable acceptance progress;
-- complexity or scope grows without a new verified prediction;
-- the same action is repeated without new evidence.
+Promote a short task before its next edit when any of these occurs:
 
-One flaky failure, one no-progress checkpoint, or one complexity increase is not enough by itself.
+- the first verification fails and another fix is planned;
+- the scope expands or a second acceptance surface appears;
+- a route assumption changes;
+- work must cross contexts;
+- architecture, dependency, or external-system uncertainty appears.
 
-## Freeze and replan
+On promotion, set `history_before_tracking: unknown`. Do not invent earlier observations.
 
-Before changing direction, preserve the current state and a recoverable Git checkpoint. Do not reset, clean, overwrite, discard user changes, or perform a broad patch series.
+## 2. Record semantic checkpoints
 
-Generate a compact replan packet containing:
+Do not log every command. Record only route selection, probes/tests/builds/acceptance checks, bounded fixes, assumption changes, route decisions, route switches, and context handoffs.
+
+Each observation contains:
+
+- result: `pass`, `fail`, or `unknown`
+- progress: `positive`, `none`, `negative`, or `unknown`
+- complexity: `lower`, `same`, `higher`, or `unknown`
+- assumption: `verified`, `unverified`, or `contradicted`
+- failure signature, checkpoint, and evidence reference when applicable
+
+Keep only the latest three or four observations in state. Store long output by path, command, or Git reference. Never copy raw logs or the full conversation into state.
+
+## 3. Handle a problem
+
+When a problem appears, stop before editing again. Record:
+
+- expected result
+- observed result
+- normalized `failure_signature`
+- reproducibility
+- affected assumption
+- checkpoint
+- evidence
+
+Then classify it:
+
+- Environment or flaky failure: retry once under the same conditions.
+- Local implementation defect: allow one bounded fix if the core assumption, interface, and architecture remain unchanged.
+- Insufficient evidence: run the smallest discriminating probe.
+- Contradicted core assumption or hard constraint: freeze the route immediately.
+- Growing complexity without progress: freeze the route.
+
+These actions remain on the current route: local fixes, rerunning existing checks, read-only inspection, and undoing the most recent bounded change when safe. Changing architecture, data model, API, dependency, interface contract, migration, checkpoint family, or rewrite scope is a route switch.
+
+## 4. Detect route trouble
+
+Set `ROUTE_STALE` when any trigger is met across controlled checkpoints:
+
+- the same `failure_signature` appears twice;
+- two checkpoints show no acceptance progress;
+- scope or complexity increases without a new verified prediction;
+- the same action, patch, command, or explanation repeats without new evidence.
+
+A single flaky failure, no-progress checkpoint, or complexity increase is insufficient.
+
+Set `REPLAN_REQUIRED` when the stale route needs a different core assumption. Use reason codes:
+
+- `constraint_violation`
+- `assumption_falsified`
+- `repeated_failure`
+- `no_progress`
+- `complexity_growth`
+- `alternative_dominates`
+
+Use `alternative_dominates` only when a candidate passes the same acceptance checks, adds no regression, and has lower measured change, complexity, risk, or rollback cost. Do not claim global optimality.
+
+## 5. Freeze, replan, and ask
+
+Before route analysis, preserve the current state and a recoverable checkpoint. Do not discard user changes.
+
+Generate a compact packet:
 
 ```text
 Goal:
@@ -53,23 +120,9 @@ Open uncertainties:
 Next probes:
 ```
 
-Use a fresh context when available. Require at least two materially different candidate routes, each with a core assumption, smallest discriminating probe, failure criterion, and checkpoint. A candidate may be inspected or tested read-only, but its implementation, dependency changes, interface changes, migrations, architecture changes, large rewrites, or route-specific rollback require user approval.
+Prepare at least two materially different candidates. For each, state its core assumption, smallest discriminating probe, expected cost, and failure criterion. Read-only inspection or probing is allowed; candidate implementation and route-specific changes require approval.
 
-## User approval gate
-
-Use these statuses:
-
-```text
-ROUTE_HEALTHY
-ROUTE_STALE
-REPLAN_REQUIRED
-WAITING_FOR_USER
-DONE
-```
-
-After candidates are prepared, enter `WAITING_FOR_USER`. Do not choose or implement a new route automatically. Ask the user to choose a candidate, continue the current route, or stop. Record the user's explicit choice with `route_check.py approve` before changing the route generation. No answer means no route change.
-
-The approval request should stay compact:
+After candidates are ready, set `WAITING_FOR_USER` and pause route changes. Ask:
 
 ```text
 Current route:
@@ -83,46 +136,35 @@ Candidate B: assumption / probe / cost / failure criterion
 Choose: A / B / current route / stop
 ```
 
-Do not call a route globally optimal. Use `alternative_dominates` only when an alternative has passed the same acceptance checks with lower measured change, complexity, risk, or rollback cost.
+The agent may recommend a choice but must not treat its recommendation as authorization. Record the user exact choice before changing `route_generation`. No reply means remain waiting.
 
-## Execute with checkpoints
+## 6. Execute an approved route
 
-For an approved route, use:
+After approval:
 
-```text
-one hypothesis -> one bounded change -> one verification
-```
+1. Record the user original choice.
+2. Increment `route_generation`.
+3. Keep the old route and evidence.
+4. Create a checkpoint for the new route.
+5. Start with its smallest probe.
 
-Keep only the latest three or four observations in state. Store paths or Git references to long output instead of copying it into context. A context handoff is not a route change; reuse the packet if the route is unchanged.
+Use the loop `one hypothesis -> one bounded change -> one verification`.
 
-If the same stop signal returns after a replan, stop expanding the patch and report the evidence and the next decision needed.
+A context handoff is not a route switch. Reuse the packet when the route is unchanged. If the same stop signal appears again after a replan, stop blind repair and report the evidence and the next user decision.
 
-## State and safety
+## 7. State and tool boundary
 
-The project-local `.route/state.json` is runtime state and must remain ignored by Git. The state contains the task class, goal, acceptance criteria, constraints, baseline, current route, recent observations, route generation, pending candidates, approval record, and current status.
+Runtime state is `.route/state.json`; it must remain ignored by Git. Valid statuses are:
 
-`route_check.py` is standard-library-only. It may write the state file, but it never resets Git, cleans files, creates branches, rolls back code, installs dependencies, or guesses test commands.
+`ROUTE_HEALTHY`, `ROUTE_STALE`, `REPLAN_REQUIRED`, `WAITING_FOR_USER`, `DONE`.
 
-Use the CLI contract below; call `status` at a semantic checkpoint and call `packet` only after a stale route has produced at least two candidates:
+Use `scripts/route_check.py` for state operations:
 
-```text
-python scripts/route_check.py init --state .route/state.json --goal "..." --acceptance "..." --route-assumption "..." --route-probe "..." --failure-criterion "..."
-python scripts/route_check.py promote --state .route/state.json --goal "..."
-python scripts/route_check.py record --state .route/state.json --result fail --progress none --failure-signature "..." --checkpoint "..." --evidence "..."
-python scripts/route_check.py status --state .route/state.json
-python scripts/route_check.py packet --state .route/state.json --candidate '{"id":"A","assumption":"...","probe":"...","failure_criterion":"..."}' --candidate '{"id":"B","assumption":"...","probe":"...","failure_criterion":"..."}'
-python scripts/route_check.py approve --state .route/state.json --choice A --user-text "User selected A"
-```
+- `init`: create long-task state;
+- `promote`: upgrade a short task;
+- `record`: append a semantic observation;
+- `status`: calculate status and reason;
+- `packet`: create the compact replan packet and enter waiting;
+- `approve`: record an explicit user choice.
 
-Never use `approve` without the user's actual route choice. Use `--choice current` only for an explicit decision to continue the frozen route, and `--choice stop` to end the task.
-
-Use these reason codes when a caller needs detail:
-
-```text
-constraint_violation
-assumption_falsified
-repeated_failure
-no_progress
-complexity_growth
-alternative_dominates
-```
+The script only changes the state file, uses Python standard library, never guesses test commands, and never changes business code or Git history. Do not call `approve` without the user actual choice. `current` means explicitly continue the frozen route; `stop` means end the task.
